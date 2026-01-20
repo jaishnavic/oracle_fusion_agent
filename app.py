@@ -21,6 +21,13 @@ class SupplierAgentRequest(BaseModel):
     sessionId: Optional[str] = None
     message: str
 
+@app.get("/")
+def root():
+    return {"message": "Fusion AI Agent is running!"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 @app.post("/supplier-agent")
 def supplier_agent(payload: SupplierAgentRequest):
@@ -186,5 +193,9 @@ def supplier_agent(payload: SupplierAgentRequest):
     }
 
 if __name__ == "__main__":
+    import os
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8009, reload=True)
+
+    port = int(os.getenv("PORT", 8009))  # Render injects PORT env variable
+
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
