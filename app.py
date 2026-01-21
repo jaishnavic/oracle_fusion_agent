@@ -4,6 +4,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 import requests
 import os
+import logging
 
 from gemini_agent import extract_supplier_payload
 from utils.session_manager import init_session, merge_session, get_missing_fields
@@ -12,6 +13,7 @@ from fusion_client import create_supplier
 from config.fusion_settings import FIELD_QUESTIONS, REQUIRED_FIELDS
 
 app = FastAPI()
+logging.basicConfig(level=logging.INFO)
 
 # ------------------------------------------------------------------
 # In-memory session store (POC only)
@@ -39,9 +41,6 @@ def get_access_token():
 
 
 def send_activity(activity: dict, text: str):
-    """
-    Send message to Azure Bot Framework (WebChat / Teams)
-    """
     token = get_access_token()
 
     url = f"{activity['serviceUrl']}/v3/conversations/{activity['conversation']['id']}/activities"
@@ -51,9 +50,7 @@ def send_activity(activity: dict, text: str):
         "from": activity["recipient"],
         "recipient": activity["from"],
         "conversation": activity["conversation"],
-        "replyToId": activity["id"],
-        "channelId": activity.get("channelId"),
-        "timestamp": datetime.utcnow().isoformat(),
+        "replyToId": activity.get("id"),
         "text": text
     }
 
@@ -66,20 +63,20 @@ def send_activity(activity: dict, text: str):
 
 
 # ------------------------------------------------------------------
-# Azure Bot Activity Model
+# Azure Bot Activity Model (SAFE)
 # ------------------------------------------------------------------
 class BotActivity(BaseModel):
-    type: Optional[str]
-    id: Optional[str]
-    text: Optional[str]
-    serviceUrl: Optional[str]
-    channelId: Optional[str]
-    from_: Optional[Dict[str, Any]]
-    recipient: Optional[Dict[str, Any]]
-    conversation: Optional[Dict[str, Any]]
+    type: Optional[str] = None
+    id: Optional[str] = None
+    text: Optional[str] = None
+    serviceUrl: Optional[str] = None
+    channelId: Optional[str] = None
+    from_: Optional[Dict[str, Any]] = None
+    recipient: Optional[Dict[str, Any]] = None
+    conversation: Optional[Dict[str, Any]] = None
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
         fields = {"from_": "from"}
 
 
@@ -96,30 +93,43 @@ def health():
 
 
 # ------------------------------------------------------------------
-# Supplier Agent Endpoint (Azure Bot)
+# Supplier Agent Endpoint
 # ------------------------------------------------------------------
 @app.post("/supplier-agent")
 async def supplier_agent(request: Request):
     activity_json = await request.json()
-    print("===== AZURE PAYLOAD =====")
-    print(activity_json)
-    print("=========================")
 
-    activity = BotActivity(**activity_json)
-    activity_dict = activity.dict(by_alias=True)
+    logging.info("===== AZURE PAYLOAD =====")
+    logging.info(activity_json)
+    logging.info("=========================")
+
+    activity_type = activity_json.get("type")
+
+    # --------------------------------------------------------------
+    # Ignore typing / ping / unknown activities
+    # --------------------------------------------------------------
+    if activity_type in ["typing", "ping"]:
+        return {"status": "ok"}
 
     # --------------------------------------------------------------
     # Handle conversation start
     # --------------------------------------------------------------
-    if activity.type == "conversationUpdate":
-        if activity_dict.get("membersAdded"):
-            send_activity(activity_dict, "👋 Hi! Type **create supplier** to begin.")
+    if activity_type == "conversationUpdate":
+        if activity_json.get("membersAdded"):
+            send_activity(activity_json, "👋 Hi! Type **create supplier** to begin.")
         return {"status": "ok"}
 
     # --------------------------------------------------------------
-    # Ignore non-message activities
+    # Only MESSAGE activities beyond this point
     # --------------------------------------------------------------
-    if activity.type != "message" or not activity.text:
+    if activity_type != "message":
+        return {"status": "ok"}
+
+    # SAFE parse only now
+    activity = BotActivity(**activity_json)
+    activity_dict = activity.model_dump(by_alias=True)
+
+    if not activity.text:
         return {"status": "ok"}
 
     conversation_id = activity_dict["conversation"]["id"]
@@ -130,7 +140,6 @@ async def supplier_agent(request: Request):
     # --------------------------------------------------------------
     if conversation_id not in sessions:
         session = init_session()
-
         extracted = extract_supplier_payload(user_input)
         session = merge_session(session, extracted)
 
@@ -226,9 +235,6 @@ async def supplier_agent(request: Request):
     state["session"] = session
     state["current_field"] = None
 
-    # --------------------------------------------------------------
-    # NEXT FIELD
-    # --------------------------------------------------------------
     missing = get_missing_fields(session)
 
     if missing:
