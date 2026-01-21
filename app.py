@@ -11,37 +11,63 @@ from config.fusion_settings import FIELD_QUESTIONS, REQUIRED_FIELDS
 
 app = FastAPI()
 
-# In-memory session store (CLI memory)
+# In-memory session store (POC only – not production safe)
 sessions = {}
 
 # -------------------------------
-# Request schema (fixes Swagger)
+# Teams-compatible response helper
+# -------------------------------
+def teams_response(
+    text: str,
+    session_id: Optional[str] = None,
+    data: Optional[dict] = None
+):
+    response = {
+        "type": "message",
+        "text": text
+    }
+    if session_id:
+        response["sessionId"] = session_id
+    if data:
+        response["data"] = data
+    return response
+
+
+# -------------------------------
+# Request schema
 # -------------------------------
 class SupplierAgentRequest(BaseModel):
     sessionId: Optional[str] = None
     message: str
 
+
+# -------------------------------
+# Health / Root
+# -------------------------------
 @app.get("/")
 def root():
-    return {"message": "Fusion AI Agent is running!"}
+    return teams_response("Fusion AI Agent is running!")
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
+# -------------------------------
+# Supplier Agent Endpoint
+# -------------------------------
 @app.post("/supplier-agent")
 def supplier_agent(payload: SupplierAgentRequest):
     session_id = payload.sessionId
     user_input = payload.message.strip()
 
     # -------------------------------
-    # INIT SESSION (CLI START)
+    # INIT SESSION
     # -------------------------------
     if not session_id or session_id not in sessions:
         session_id = str(uuid.uuid4())
         session = init_session()
 
-        # Try extracting from first sentence
         extracted = extract_supplier_payload(user_input)
         session = merge_session(session, extracted)
 
@@ -55,10 +81,10 @@ def supplier_agent(payload: SupplierAgentRequest):
         }
 
         if current_field:
-            return {
-                "sessionId": session_id,
-                "reply": FIELD_QUESTIONS[current_field]
-            }
+            return teams_response(
+                text=FIELD_QUESTIONS[current_field],
+                session_id=session_id
+            )
 
     # -------------------------------
     # RESTORE SESSION
@@ -76,35 +102,37 @@ def supplier_agent(payload: SupplierAgentRequest):
 
         if decision == "yes":
             status, response = create_supplier(session)
-            sessions.pop(session_id)
+            sessions.pop(session_id, None)
 
             if status == 201:
-                return {
-                    "reply": "Supplier created successfully",
-                    "SupplierId": response.get("SupplierId"),
-                    "SupplierNumber": response.get("SupplierNumber")
-                }
+                return teams_response(
+                    text="✅ Supplier created successfully",
+                    data={
+                        "SupplierId": response.get("SupplierId"),
+                        "SupplierNumber": response.get("SupplierNumber")
+                    }
+                )
 
-            return {
-                "reply": "Supplier creation failed",
-                "error": response
-            }
+            return teams_response(
+                text="❌ Supplier creation failed",
+                data={"error": response}
+            )
 
         elif decision == "edit":
             state["state"] = "EDIT"
-            return {
-                "sessionId": session_id,
-                "reply": "Which field do you want to edit? (Enter number)"
-            }
+            return teams_response(
+                text="Which field do you want to edit? (Enter number)",
+                session_id=session_id
+            )
 
         elif decision == "cancel":
-            sessions.pop(session_id)
-            return {"reply": "Supplier creation cancelled."}
+            sessions.pop(session_id, None)
+            return teams_response("Supplier creation cancelled.")
 
-        return {
-            "sessionId": session_id,
-            "reply": "Invalid option. Please type yes, edit, or cancel."
-        }
+        return teams_response(
+            text="Invalid option. Please type yes, edit, or cancel.",
+            session_id=session_id
+        )
 
     # -------------------------------
     # EDIT MODE
@@ -117,18 +145,18 @@ def supplier_agent(payload: SupplierAgentRequest):
             state["current_field"] = current_field
             state["state"] = "COLLECTING"
 
-            return {
-                "sessionId": session_id,
-                "reply": FIELD_QUESTIONS[current_field]
-            }
+            return teams_response(
+                text=FIELD_QUESTIONS[current_field],
+                session_id=session_id
+            )
 
-        return {
-            "sessionId": session_id,
-            "reply": "Invalid choice. Enter a valid number."
-        }
+        return teams_response(
+            text="Invalid choice. Enter a valid number.",
+            session_id=session_id
+        )
 
     # -------------------------------
-    # COLLECTING MODE (CLI LOOP)
+    # COLLECTING MODE
     # -------------------------------
     if current_field:
         if len(user_input.split()) > 3:
@@ -153,10 +181,10 @@ def supplier_agent(payload: SupplierAgentRequest):
         next_field = missing[0]
         state["current_field"] = next_field
 
-        return {
-            "sessionId": session_id,
-            "reply": FIELD_QUESTIONS[next_field]
-        }
+        return teams_response(
+            text=FIELD_QUESTIONS[next_field],
+            session_id=session_id
+        )
 
     # -------------------------------
     # FINAL VALIDATION
@@ -165,14 +193,14 @@ def supplier_agent(payload: SupplierAgentRequest):
     if validation_errors:
         state["current_field"] = REQUIRED_FIELDS[0]
 
-        return {
-            "sessionId": session_id,
-            "reply": (
-                "Input validation failed:\n" +
-                "\n".join(validation_errors) +
-                f"\n\n{FIELD_QUESTIONS[REQUIRED_FIELDS[0]]}"
-            )
-        }
+        return teams_response(
+            text=(
+                "Input validation failed:\n"
+                + "\n".join(validation_errors)
+                + f"\n\n{FIELD_QUESTIONS[REQUIRED_FIELDS[0]]}"
+            ),
+            session_id=session_id
+        )
 
     # -------------------------------
     # CONFIRMATION SUMMARY
@@ -183,19 +211,22 @@ def supplier_agent(payload: SupplierAgentRequest):
 
     state["state"] = "CONFIRM"
 
-    return {
-        "sessionId": session_id,
-        "reply": (
-            "Please review the supplier details:\n\n" +
-            "\n".join(summary) +
-            "\n\nConfirm? (yes / edit / cancel)"
-        )
-    }
+    return teams_response(
+        text=(
+            "Please review the supplier details:\n\n"
+            + "\n".join(summary)
+            + "\n\nConfirm? (yes / edit / cancel)"
+        ),
+        session_id=session_id
+    )
 
+
+# -------------------------------
+# Local run (Render ignores this)
+# -------------------------------
 if __name__ == "__main__":
     import os
     import uvicorn
 
-    port = int(os.getenv("PORT", 8009))  # Render injects PORT env variable
-
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+    port = int(os.getenv("PORT", 8009))
+    uvicorn.run("app:app", host="0.0.0.0", port=port)
