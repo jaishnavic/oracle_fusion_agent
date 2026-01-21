@@ -82,12 +82,20 @@ async def supplier_agent(request: Request):
             "current_field": current_field,
             "state": "COLLECTING"
         }
+        print("CURRENT FIELD:", current_field)
+        print("QUESTION:", FIELD_QUESTIONS.get(current_field))
 
         if current_field:
+            question = FIELD_QUESTIONS.get(
+                current_field,
+                f"Please provide {current_field.replace('_', ' ')}"
+            )
+
             return {
                 "type": "message",
-                "text": FIELD_QUESTIONS[current_field]
+                "text": question
             }
+
 
     # -------------------------------
     # RESTORE SESSION
