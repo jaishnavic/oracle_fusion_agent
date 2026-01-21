@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Optional
 import uuid
-
+from fastapi import Request
+import requests
 from gemini_agent import extract_supplier_payload
 from utils.session_manager import init_session, merge_session, get_missing_fields
 from fusion_validator import validate_against_fusion
@@ -22,15 +23,16 @@ from datetime import datetime
 def bot_activity_response(text: str, activity: dict):
     return {
         "type": "message",
-        "from": activity["recipient"],   # bot
-        "recipient": activity["from"],    # user
-        "conversation": activity["conversation"],
+        "from": activity.get("recipient", {}),   # bot
+        "recipient": activity.get("from", {}),   # user
+        "conversation": activity.get("conversation", {}),
         "replyToId": activity.get("id"),
-        "serviceUrl": activity["serviceUrl"],
-        "channelId": activity["channelId"],
+        "serviceUrl": activity.get("serviceUrl"),
+        "channelId": activity.get("channelId"),
         "timestamp": datetime.utcnow().isoformat(),
         "text": text
     }
+
  
 from typing import Dict, Any
  
@@ -45,10 +47,7 @@ class BotActivity(BaseModel):
     conversation: Optional[Dict[str, Any]] = None
 
     class Config:
-        fields = {"from_": "from"}
-
- 
-    class Config:
+        allow_population_by_field_name = True
         fields = {"from_": "from"}
 
 # -------------------------------
@@ -76,14 +75,24 @@ def health():
 # -------------------------------
 @app.post("/supplier-agent")
 
-def supplier_agent(activity: BotActivity):
+@app.post("/supplier-agent")
+async def supplier_agent(request: Request):
+
+    raw_body = await request.json()
+    print("===== AZURE RAW PAYLOAD =====")
+    print(raw_body)
+    print("============================")
+
+    # Now safely parse into BotActivity
+    activity = BotActivity(**raw_body)
 
     # Ignore non-message activities (typing, conversationUpdate, etc.)
 
     if activity.type != "message":
         return {}
-    if not activity.conversation or not activity.conversation.get("id"):
+    if not activity.dict(by_alias=True).get("from") or not activity.dict(by_alias=True).get("recipient"):
         return {}
+
     conversation_id = activity.conversation["id"]
     user_input = (activity.text or "").strip()
  
