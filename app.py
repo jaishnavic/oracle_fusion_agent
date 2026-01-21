@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
+from datetime import datetime
+import requests
 
 from gemini_agent import extract_supplier_payload
 from utils.session_manager import init_session, merge_session, get_missing_fields
@@ -12,6 +14,27 @@ app = FastAPI()
 
 # In-memory session store (POC only – not production safe)
 sessions = {}
+
+# -------------------------------
+# Azure Bot helpers
+# -------------------------------
+
+def bot_activity_response(text: str, activity: Dict[str, Any]):
+    """
+    Construct a proper bot activity response
+    """
+    return {
+        "type": "message",
+        "from": activity.get("recipient", {}),
+        "recipient": activity.get("from", {}),
+        "conversation": activity.get("conversation", {}),
+        "replyToId": activity.get("id"),
+        "serviceUrl": activity.get("serviceUrl"),
+        "channelId": activity.get("channelId"),
+        "timestamp": datetime.utcnow().isoformat(),
+        "text": text
+    }
+
 
 # -------------------------------
 # Azure Bot Activity Model
@@ -31,8 +54,9 @@ class BotActivity(BaseModel):
         allow_population_by_field_name = True
         fields = {"from_": "from"}
 
+
 # -------------------------------
-# Health
+# Health endpoints
 # -------------------------------
 
 @app.get("/")
@@ -42,6 +66,7 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 
 # -------------------------------
 # Supplier Agent Endpoint
@@ -56,12 +81,13 @@ async def supplier_agent(request: Request):
     print("============================")
 
     activity = BotActivity(**raw_body)
+    activity_dict = activity.dict(by_alias=True)
 
-    # Ignore non-message activities (typing, conversationUpdate, etc.)
+    # Ignore non-message activities but return valid typing activity
     if activity.type != "message":
-        return {}
+        return {"type": "typing"}
 
-    conversation_id = activity.conversation["id"]
+    conversation_id = activity_dict["conversation"]["id"]
     user_input = (activity.text or "").strip()
 
     # -------------------------------
@@ -70,10 +96,8 @@ async def supplier_agent(request: Request):
 
     if conversation_id not in sessions:
         session = init_session()
-
         extracted = extract_supplier_payload(user_input)
         session = merge_session(session, extracted)
-
         missing = get_missing_fields(session)
         current_field = missing[0] if missing else None
 
@@ -82,20 +106,13 @@ async def supplier_agent(request: Request):
             "current_field": current_field,
             "state": "COLLECTING"
         }
-        print("CURRENT FIELD:", current_field)
-        print("QUESTION:", FIELD_QUESTIONS.get(current_field))
 
         if current_field:
             question = FIELD_QUESTIONS.get(
                 current_field,
                 f"Please provide {current_field.replace('_', ' ')}"
             )
-
-            return {
-                "type": "message",
-                "text": question
-            }
-
+            return bot_activity_response(question, activity_dict)
 
     # -------------------------------
     # RESTORE SESSION
@@ -118,38 +135,24 @@ async def supplier_agent(request: Request):
             sessions.pop(conversation_id, None)
 
             if status == 201:
-                return {
-                    "type": "message",
-                    "text": (
-                        "✅ Supplier created successfully\n"
-                        f"SupplierId: {response.get('SupplierId')}\n"
-                        f"SupplierNumber: {response.get('SupplierNumber')}"
-                    )
-                }
+                return bot_activity_response(
+                    f"✅ Supplier created successfully\n"
+                    f"SupplierId: {response.get('SupplierId')}\n"
+                    f"SupplierNumber: {response.get('SupplierNumber')}",
+                    activity_dict
+                )
 
-            return {
-                "type": "message",
-                "text": "❌ Supplier creation failed"
-            }
+            return bot_activity_response("❌ Supplier creation failed", activity_dict)
 
         if decision == "edit":
             state["state"] = "EDIT"
-            return {
-                "type": "message",
-                "text": "Which field do you want to edit? (Enter number)"
-            }
+            return bot_activity_response("Which field do you want to edit? (Enter number)", activity_dict)
 
         if decision == "cancel":
             sessions.pop(conversation_id, None)
-            return {
-                "type": "message",
-                "text": "Supplier creation cancelled."
-            }
+            return bot_activity_response("Supplier creation cancelled.", activity_dict)
 
-        return {
-            "type": "message",
-            "text": "Please type: yes, edit, or cancel."
-        }
+        return bot_activity_response("Please type: yes, edit, or cancel.", activity_dict)
 
     # -------------------------------
     # EDIT MODE
@@ -162,16 +165,9 @@ async def supplier_agent(request: Request):
             field = field_index_map[user_input]
             state["current_field"] = field
             state["state"] = "COLLECTING"
+            return bot_activity_response(FIELD_QUESTIONS[field], activity_dict)
 
-            return {
-                "type": "message",
-                "text": FIELD_QUESTIONS[field]
-            }
-
-        return {
-            "type": "message",
-            "text": "Invalid number. Try again."
-        }
+        return bot_activity_response("Invalid number. Try again.", activity_dict)
 
     # -------------------------------
     # COLLECTING MODE
@@ -196,11 +192,8 @@ async def supplier_agent(request: Request):
     if missing:
         next_field = missing[0]
         state["current_field"] = next_field
-
-        return {
-            "type": "message",
-            "text": FIELD_QUESTIONS[next_field]
-        }
+        question = FIELD_QUESTIONS.get(next_field, f"Please provide {next_field.replace('_', ' ')}")
+        return bot_activity_response(question, activity_dict)
 
     # -------------------------------
     # FINAL VALIDATION
@@ -210,26 +203,15 @@ async def supplier_agent(request: Request):
 
     if errors:
         state["current_field"] = REQUIRED_FIELDS[0]
-        return {
-            "type": "message",
-            "text": "Validation failed:\n" + "\n".join(errors)
-        }
+        return bot_activity_response("Validation failed:\n" + "\n".join(errors), activity_dict)
 
     # -------------------------------
     # CONFIRM SUMMARY
     # -------------------------------
 
-    summary = "\n".join(
-        f"{i+1}. {f}: {session[f]}" for i, f in enumerate(REQUIRED_FIELDS)
-    )
-
+    summary = "\n".join(f"{i+1}. {f}: {session[f]}" for i, f in enumerate(REQUIRED_FIELDS))
     state["state"] = "CONFIRM"
-
-    return {
-        "type": "message",
-        "text": (
-            "Please review:\n\n"
-            f"{summary}\n\n"
-            "Confirm? (yes / edit / cancel)"
-        )
-    }
+    return bot_activity_response(
+        f"Please review:\n\n{summary}\n\nConfirm? (yes / edit / cancel)",
+        activity_dict
+    )
