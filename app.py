@@ -65,24 +65,40 @@ def get_access_token():
  
 def send_activity(activity: dict, text: str):
     token = get_access_token()
- 
-    url = f"{activity['serviceUrl']}/v3/conversations/{activity['conversation']['id']}/activities"
- 
+
+    service_url = activity.get("serviceUrl")
+    conversation = activity.get("conversation")
+
+    # SAFELY resolve sender & recipient
+    user = activity.get("from") or activity.get("from_")
+    bot = activity.get("recipient")
+
+    if not all([service_url, conversation, user, bot]):
+        logging.error("Invalid activity payload for sending message")
+        logging.error(activity)
+        return
+
+    url = f"{service_url}/v3/conversations/{conversation['id']}/activities"
+
     payload = {
         "type": "message",
-        "from": activity["recipient"],
-        "recipient": activity["from"],
-        "conversation": activity["conversation"],
+        "from": bot,          # BOT sends
+        "recipient": user,    # USER receives
+        "conversation": conversation,
         "replyToId": activity.get("id"),
         "text": text
     }
- 
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
- 
-    requests.post(url, headers=headers, json=payload)
+
+    response = requests.post(url, headers=headers, json=payload)
+
+    if response.status_code not in (200, 201):
+        logging.error("Failed to send activity")
+        logging.error(response.text)
  
  
 # ------------------------------------------------------------------
