@@ -121,85 +121,86 @@ def health():
 @app.post("/supplier-agent")
 async def supplier_agent(request: Request):
     activity_json = await request.json()
- 
+
     logging.info("===== AZURE PAYLOAD =====")
     logging.info(activity_json)
     logging.info("=========================")
- 
+
     activity_type = activity_json.get("type")
- 
+
     # --------------------------------------------------------------
-    # Ignore typing / ping / unknown activities
+    # Ignore typing / ping
     # --------------------------------------------------------------
     if activity_type in ["typing", "ping"]:
         return {"status": "ok"}
- 
+
     # --------------------------------------------------------------
-    # Handle conversation start
+    # Conversation start
     # --------------------------------------------------------------
     if activity_type == "conversationUpdate":
         if activity_json.get("membersAdded"):
             send_activity(activity_json, "👋 Hi! Type **create supplier** to begin.")
         return {"status": "ok"}
- 
+
     # --------------------------------------------------------------
-    # Only MESSAGE activities beyond this point
+    # Only MESSAGE activities
     # --------------------------------------------------------------
     if activity_type != "message":
         return {"status": "ok"}
- 
-    # SAFE parse only now
+
     activity = BotActivity(**activity_json)
     activity_dict = activity.model_dump(by_alias=True)
- 
+
     if not activity.text:
         return {"status": "ok"}
- 
+
     conversation_id = activity_dict["conversation"]["id"]
-    user_input = activity.text.strip()
- 
-    # --------------------------------------------------------------
-    # INIT SESSION
-    # --------------------------------------------------------------
+    user_input = activity.text.strip().lower()
+
+    # ==============================================================
+    # ✅ FIXED INIT SESSION LOGIC
+    # ==============================================================
     if conversation_id not in sessions:
+
+        # ---- enforce command trigger ----
+        if user_input not in ["create supplier", "create a supplier"]:
+            send_activity(
+                activity_dict,
+                "Please type **create supplier** to start supplier creation."
+            )
+            return {"status": "ok"}
+
+        # ---- explicitly start supplier flow ----
         session = init_session()
-        extracted = extract_supplier_payload(user_input)
-        session = merge_session(session, extracted)
- 
-        missing = get_missing_fields(session)
-        current_field = missing[0] if missing else None
- 
+        first_field = REQUIRED_FIELDS[0]
+
         sessions[conversation_id] = {
             "session": session,
-            "current_field": current_field,
+            "current_field": first_field,
             "state": "COLLECTING"
         }
- 
-        if current_field:
-            send_activity(activity_dict, FIELD_QUESTIONS[current_field])
-        else:
-            send_activity(activity_dict, "Please provide supplier details.")
- 
+
+        send_activity(activity_dict, FIELD_QUESTIONS[first_field])
         return {"status": "ok"}
- 
-    # --------------------------------------------------------------
+
+    # ==============================================================
     # RESTORE SESSION
-    # --------------------------------------------------------------
+    # ==============================================================
     state = sessions[conversation_id]
     session = state["session"]
     current_field = state["current_field"]
     mode = state["state"]
- 
+
     # --------------------------------------------------------------
     # CONFIRM MODE
     # --------------------------------------------------------------
     if mode == "CONFIRM":
-        decision = user_input.lower()
- 
+        decision = user_input
+
         if decision == "yes":
             status, response = create_supplier(session)
             sessions.pop(conversation_id, None)
- 
+
             if status == 201:
                 send_activity(
                     activity_dict,
@@ -209,9 +210,9 @@ async def supplier_agent(request: Request):
                 )
             else:
                 send_activity(activity_dict, "❌ Supplier creation failed.")
- 
+
             return {"status": "ok"}
- 
+
         if decision == "edit":
             state["state"] = "EDIT"
             send_activity(
@@ -220,21 +221,21 @@ async def supplier_agent(request: Request):
                 "\n".join(f"{i+1}. {f}" for i, f in enumerate(REQUIRED_FIELDS))
             )
             return {"status": "ok"}
- 
+
         if decision == "cancel":
             sessions.pop(conversation_id, None)
             send_activity(activity_dict, "❌ Supplier creation cancelled.")
             return {"status": "ok"}
- 
+
         send_activity(activity_dict, "Please type: yes, edit, or cancel.")
         return {"status": "ok"}
- 
+
     # --------------------------------------------------------------
     # EDIT MODE
     # --------------------------------------------------------------
     if mode == "EDIT":
         field_map = {str(i + 1): f for i, f in enumerate(REQUIRED_FIELDS)}
- 
+
         if user_input in field_map:
             field = field_map[user_input]
             state["current_field"] = field
@@ -242,30 +243,30 @@ async def supplier_agent(request: Request):
             send_activity(activity_dict, FIELD_QUESTIONS[field])
         else:
             send_activity(activity_dict, "Invalid choice. Try again.")
- 
+
         return {"status": "ok"}
- 
+
     # --------------------------------------------------------------
     # COLLECTING MODE
     # --------------------------------------------------------------
     if current_field:
         extracted = extract_supplier_payload(user_input)
         session = merge_session(session, extracted)
- 
+
         if not session.get(current_field):
-            session[current_field] = user_input
- 
+            session[current_field] = activity.text.strip()
+
     state["session"] = session
     state["current_field"] = None
- 
+
     missing = get_missing_fields(session)
- 
+
     if missing:
         next_field = missing[0]
         state["current_field"] = next_field
         send_activity(activity_dict, FIELD_QUESTIONS[next_field])
         return {"status": "ok"}
- 
+
     # --------------------------------------------------------------
     # FINAL VALIDATION
     # --------------------------------------------------------------
@@ -273,19 +274,23 @@ async def supplier_agent(request: Request):
     if errors:
         send_activity(activity_dict, "Validation failed:\n" + "\n".join(errors))
         return {"status": "ok"}
- 
+
     # --------------------------------------------------------------
     # CONFIRM SUMMARY
     # --------------------------------------------------------------
-    summary = "\n".join(f"{i+1}. {f}: {session[f]}" for i, f in enumerate(REQUIRED_FIELDS))
+    summary = "\n".join(
+        f"{i+1}. {f}: {session[f]}"
+        for i, f in enumerate(REQUIRED_FIELDS)
+    )
+
     state["state"] = "CONFIRM"
- 
+
     send_activity(
         activity_dict,
-        "Please review the supplier details:\n\n" +
-        summary +
-        "\n\nConfirm? (yes / edit / cancel)"
+        "Please review the supplier details:\n\n"
+        + summary
+        + "\n\nConfirm? (yes / edit / cancel)"
     )
- 
+
     return {"status": "ok"}
  
