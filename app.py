@@ -35,14 +35,18 @@ def bot_activity_response(text: str, activity: dict):
 from typing import Dict, Any
  
 class BotActivity(BaseModel):
-    type: str
-    id: Optional[str]
-    text: Optional[str]
-    serviceUrl: str
-    channelId: str
-    from_: Dict[str, Any]
-    recipient: Dict[str, Any]
-    conversation: Dict[str, Any]
+    type: Optional[str] = None
+    id: Optional[str] = None
+    text: Optional[str] = None
+    serviceUrl: Optional[str] = None
+    channelId: Optional[str] = None
+    from_: Optional[Dict[str, Any]] = None
+    recipient: Optional[Dict[str, Any]] = None
+    conversation: Optional[Dict[str, Any]] = None
+
+    class Config:
+        fields = {"from_": "from"}
+
  
     class Config:
         fields = {"from_": "from"}
@@ -77,11 +81,10 @@ def supplier_agent(activity: BotActivity):
     # Ignore non-message activities (typing, conversationUpdate, etc.)
 
     if activity.type != "message":
-
         return {}
- 
+    if not activity.conversation or not activity.conversation.get("id"):
+        return {}
     conversation_id = activity.conversation["id"]
-
     user_input = (activity.text or "").strip()
  
     # -------------------------------
