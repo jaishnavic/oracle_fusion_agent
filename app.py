@@ -2,6 +2,8 @@ from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from datetime import datetime
+import requests
+import time
  
 from gemini_agent import extract_supplier_payload
 from utils.session_manager import init_session, merge_session, get_missing_fields
@@ -11,13 +13,64 @@ from config.fusion_settings import FIELD_QUESTIONS, REQUIRED_FIELDS
  
 app = FastAPI()
  
-# In-memory session store (POC only – not production safe)
+# -------------------------------
+# In-memory session store
+# -------------------------------
 sessions = {}
+ 
+# -------------------------------
+# Azure Bot Activity Model
+# -------------------------------
+class BotActivity(BaseModel):
+    type: Optional[str] = None
+    id: Optional[str] = None
+    text: Optional[str] = None
+    serviceUrl: Optional[str] = None
+    channelId: Optional[str] = None
+    from_: Optional[Dict[str, Any]] = None
+    recipient: Optional[Dict[str, Any]] = None
+    conversation: Optional[Dict[str, Any]] = None
+ 
+    class Config:
+        allow_population_by_field_name = True
+        fields = {"from_": "from"}
  
 # -------------------------------
 # Azure Bot helpers
 # -------------------------------
+def send_activity(activity: dict, message_text: str):
+    """Send a message to Teams / Web Chat using Bot Framework."""
+    if not activity.get("serviceUrl") or not activity.get("conversation"):
+        return
  
+    service_url = activity["serviceUrl"]
+    conversation_id = activity["conversation"]["id"]
+ 
+    url = f"{service_url}/v3/conversations/{conversation_id}/activities"
+ 
+    payload = {
+        "type": "message",
+        "from": activity.get("recipient", {}),
+        "recipient": activity.get("from", {}),
+        "conversation": activity.get("conversation", {}),
+        "replyToId": activity.get("id"),
+        "channelId": activity.get("channelId"),
+        "text": message_text,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+ 
+    try:
+        # Simulate typing indicator before sending
+        typing_payload = payload.copy()
+        typing_payload["type"] = "typing"
+        requests.post(url, json=typing_payload)
+        time.sleep(0.5)  # small delay for UX
+ 
+        # Send actual message
+        requests.post(url, json=payload)
+    except Exception as e:
+        print("Error sending activity:", e)
+
 def bot_activity_response(text: str, activity: Dict[str, Any], actions: list = None):
     """
     Construct a proper bot activity response, with optional suggested action buttons.
@@ -40,27 +93,8 @@ def bot_activity_response(text: str, activity: Dict[str, Any], actions: list = N
     return msg
  
 # -------------------------------
-# Azure Bot Activity Model
+# Health Endpoints
 # -------------------------------
- 
-class BotActivity(BaseModel):
-    type: Optional[str] = None
-    id: Optional[str] = None
-    text: Optional[str] = None
-    serviceUrl: Optional[str] = None
-    channelId: Optional[str] = None
-    from_: Optional[Dict[str, Any]] = None
-    recipient: Optional[Dict[str, Any]] = None
-    conversation: Optional[Dict[str, Any]] = None
- 
-    class Config:
-        allow_population_by_field_name = True
-        fields = {"from_": "from"}
- 
-# -------------------------------
-# Health endpoints
-# -------------------------------
- 
 @app.get("/")
 def root():
     return {"message": "Fusion AI Agent is running"}
@@ -72,10 +106,13 @@ def health():
 # -------------------------------
 # Supplier Agent Endpoint
 # -------------------------------
- 
 @app.post("/supplier-agent")
 async def supplier_agent(request: Request):
     raw_body = await request.json()
+    print("===== AZURE RAW PAYLOAD =====")
+    print(raw_body)
+    print("============================")
+ 
     activity = BotActivity(**raw_body)
     activity_dict = activity.dict(by_alias=True)
  
