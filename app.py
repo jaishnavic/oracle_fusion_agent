@@ -5,6 +5,7 @@ from datetime import datetime
 import requests
 import os
 import logging
+import json
  
 from gemini_agent import extract_supplier_payload
 from utils.session_manager import init_session, merge_session, get_missing_fields
