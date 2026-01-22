@@ -194,33 +194,35 @@ async def supplier_agent(request: Request):
         decision = user_input
 
         if decision == "yes":
+            # 1. Trigger the API
             status, response = create_supplier(session)
+            
+            # 2. DEBUG LOGGING: This will show up in your Render logs
+            logging.info(f"--- FUSION DEBUG START ---")
+            logging.info(f"Status: {status}")
+            logging.info(f"Raw Response: {response}")
+            logging.info(f"--- FUSION DEBUG END ---")
+
             sessions.pop(conversation_id, None)
 
-            try:
-                status, response = create_supplier(session)
-            except Exception as e:
-                status, response = 500, str(e)
-
-            sessions.pop(conversation_id, None)
-
-            # --- STEP C: SEND SUCCESS/FAILURE RESPONSE ---
+            # 3. Handle the Response
             if status == 201:
-                msg = (
-                    "✅ **Supplier Created Successfully**\n\n"
-                    f"Supplier ID: {response.get('SupplierId')}\n"
-                    f"Supplier Number: {response.get('SupplierNumber')}"
-                )
+                # Success
+                supplier_id = response.get('SupplierId', 'N/A') if isinstance(response, dict) else "Created"
+                send_activity(activity_json, f"✅ **Success!** Supplier created. ID: {supplier_id}")
             else:
-                # Log the raw error for debugging
-                logging.error(f"Fusion API Failed: {response}")
+                # FAILURE: Send the exact error string to Azure Chat
+                # If response is a dict, convert it to a readable string
+                error_detail = json.dumps(response, indent=2) if isinstance(response, dict) else str(response)
                 
-                # If the error is a dict, try to get the message, otherwise use string
-                error_detail = response if isinstance(response, str) else str(response)
-                msg = f"❌ **Creation Failed (Status: {status})**\n\nIssue: {error_detail}"
-
-            # We use activity_json here to ensure the serviceUrl is correct
-            send_activity(activity_json, msg)
+                error_message = (
+                    f"❌ **Fusion API Error ({status})**\n\n"
+                    f"Please check the details below:\n"
+                    f"```\n{error_detail}\n```"
+                )
+                
+                send_activity(activity_json, error_message)
+            
             return {"status": "ok"}
 
 
