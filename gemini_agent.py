@@ -23,23 +23,40 @@ TaxpayerId
 DUNSNumber
 """
 
+import json
+import logging
+from google.genai.errors import ClientError
+
 def extract_supplier_payload(user_input: str) -> dict:
-    response = client.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=f"{SYSTEM_PROMPT}\n\nUser input:\n{user_input}"
-    )
-
-    text = response.text.strip()
-
-    # 🔒 Strip markdown if present
-    if text.startswith("```"):
-        text = text.strip("```").replace("json", "").strip()
-
     try:
+        response = client.models.generate_content(
+            model="models/gemini-2.5-flash",
+            contents=f"{SYSTEM_PROMPT}\n\nUser input:\n{user_input}"
+        )
+
+        if not response or not response.text:
+            return {}
+
+        text = response.text.strip()
+
+        # 🔒 Strip markdown if present
+        if text.startswith("```"):
+            text = text.strip("```").replace("json", "").strip()
+
         parsed = json.loads(text)
         if isinstance(parsed, dict):
             return parsed
-    except Exception:
-        pass
 
+    except ClientError as e:
+        # 🔥 Gemini quota / rate-limit / auth errors
+        logging.error("Gemini API error (quota / auth / rate limit)")
+        logging.error(str(e))
+
+    except json.JSONDecodeError:
+        logging.warning("Gemini returned non-JSON response")
+
+    except Exception as e:
+        logging.exception("Unexpected error in extract_supplier_payload")
+
+    # ✅ SAFE FALLBACK
     return {}
