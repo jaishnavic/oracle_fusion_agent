@@ -207,21 +207,18 @@ async def supplier_agent(request: Request):
             sessions.pop(conversation_id, None)
 
             # 3. Handle the Response
-            if status == 201:
-                # ✅ SUCCESS — extract values safely
-                supplier_id = "N/A"
-                supplier_number = "N/A"
-
-                if isinstance(response, dict):
-                    supplier_id = response.get("SupplierId", "N/A")
-                    supplier_number = response.get("SupplierNumber", "N/A")
+            if status == 201 and isinstance(response, dict):
+                supplier_id = response.get("SupplierId", "N/A")
+                supplier_number = response.get("SupplierNumber", "N/A")
 
                 send_activity(
                     activity_json,
                     "✅ **Success! Supplier created.**\n\n"
-                    f"**Supplier ID:** {supplier_id}\n"
-                    f"**Supplier Number:** {supplier_number}"
+                    f"Supplier ID: {supplier_id}\n"
+                    f"Supplier Number: {supplier_number}"
                 )
+                return {"status": "ok"}
+
             else:
                 # FAILURE: Send the exact error string to Azure Chat
                 # If response is a dict, convert it to a readable string

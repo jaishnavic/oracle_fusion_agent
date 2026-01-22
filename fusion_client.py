@@ -1,6 +1,7 @@
 import requests
 from requests.auth import HTTPBasicAuth
 from config.fusion_settings import FUSION_BASE_URL, FUSION_USERNAME, FUSION_PASSWORD, SUPPLIER_ENDPOINT
+import logging
 
 
 def create_supplier(payload: dict):
@@ -17,11 +18,20 @@ def create_supplier(payload: dict):
         timeout=60
     )
 
-    # 🔒 SAFE RESPONSE PARSING (Oracle-friendly)
+    logging.info("--- FUSION DEBUG START ---")
+    logging.info(f"Status: {response.status_code}")
+
     try:
         body = response.json()
+        logging.info(f"Raw Response: {body}")
     except ValueError:
-        body = {}   # Oracle returns empty body on 201
-    
+        body = None
+        logging.info(f"Raw Response Text: {response.text}")
+
+    logging.info("--- FUSION DEBUG END ---")
+
+    # 🔴 IMPORTANT: return TEXT if JSON is empty
+    if not body:
+        return response.status_code, response.text.strip()
 
     return response.status_code, body
