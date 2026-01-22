@@ -66,24 +66,17 @@ def get_access_token():
 def send_activity(activity: dict, text: str):
     token = get_access_token()
 
-    service_url = activity.get("serviceUrl")
-    conversation = activity.get("conversation")
-
-    # SAFELY resolve sender & recipient
-    user = activity.get("from") or activity.get("from_")
-    bot = activity.get("recipient")
-
-    if not all([service_url, conversation, user, bot]):
-        logging.error("Invalid activity payload for sending message")
-        logging.error(activity)
-        return
+    service_url = activity["serviceUrl"]
+    conversation = activity["conversation"]
+    user = activity["from"]
+    bot = activity["recipient"]
 
     url = f"{service_url}/v3/conversations/{conversation['id']}/activities"
 
     payload = {
         "type": "message",
-        "from": bot,          # BOT sends
-        "recipient": user,    # USER receives
+        "from": bot,        # BOT
+        "recipient": user, # USER
         "conversation": conversation,
         "replyToId": activity.get("id"),
         "text": text
@@ -94,11 +87,12 @@ def send_activity(activity: dict, text: str):
         "Content-Type": "application/json"
     }
 
-    response = requests.post(url, headers=headers, json=payload)
+    r = requests.post(url, headers=headers, json=payload)
 
-    if response.status_code not in (200, 201):
-        logging.error("Failed to send activity")
-        logging.error(response.text)
+    if r.status_code not in (200, 201):
+        logging.error("Send activity failed")
+        logging.error(r.text)
+
  
  
 # ------------------------------------------------------------------
@@ -181,7 +175,7 @@ async def supplier_agent(request: Request):
         # ---- enforce command trigger ----
         if user_input not in ["create supplier", "create a supplier"]:
             send_activity(
-                activity_dict,
+                activity_json,
                 "Please type **create supplier** to start supplier creation."
             )
             return {"status": "ok"}
@@ -196,7 +190,7 @@ async def supplier_agent(request: Request):
             "state": "COLLECTING"
         }
 
-        send_activity(activity_dict, FIELD_QUESTIONS[first_field])
+        send_activity(activity_json, FIELD_QUESTIONS[first_field])
         return {"status": "ok"}
 
     # ==============================================================
@@ -219,20 +213,20 @@ async def supplier_agent(request: Request):
 
             if status == 201:
                 send_activity(
-                    activity_dict,
+                    activity_json,
                     f"✅ Supplier Created Successfully\n"
                     f"Supplier ID: {response.get('SupplierId')}\n"
                     f"Supplier Number: {response.get('SupplierNumber')}"
                 )
             else:
-                send_activity(activity_dict, "❌ Supplier creation failed.")
+                send_activity(activity_json, "❌ Supplier creation failed.")
 
             return {"status": "ok"}
 
         if decision == "edit":
             state["state"] = "EDIT"
             send_activity(
-                activity_dict,
+                activity_json,
                 "Which field do you want to edit?\n" +
                 "\n".join(f"{i+1}. {f}" for i, f in enumerate(REQUIRED_FIELDS))
             )
@@ -240,10 +234,10 @@ async def supplier_agent(request: Request):
 
         if decision == "cancel":
             sessions.pop(conversation_id, None)
-            send_activity(activity_dict, "❌ Supplier creation cancelled.")
+            send_activity(activity_json, "❌ Supplier creation cancelled.")
             return {"status": "ok"}
 
-        send_activity(activity_dict, "Please type: yes, edit, or cancel.")
+        send_activity(activity_json, "Please type: yes, edit, or cancel.")
         return {"status": "ok"}
 
     # --------------------------------------------------------------
@@ -256,9 +250,9 @@ async def supplier_agent(request: Request):
             field = field_map[user_input]
             state["current_field"] = field
             state["state"] = "COLLECTING"
-            send_activity(activity_dict, FIELD_QUESTIONS[field])
+            send_activity(activity_json, FIELD_QUESTIONS[field])
         else:
-            send_activity(activity_dict, "Invalid choice. Try again.")
+            send_activity(activity_json, "Invalid choice. Try again.")
 
         return {"status": "ok"}
 
@@ -280,7 +274,7 @@ async def supplier_agent(request: Request):
     if missing:
         next_field = missing[0]
         state["current_field"] = next_field
-        send_activity(activity_dict, FIELD_QUESTIONS[next_field])
+        send_activity(activity_json, FIELD_QUESTIONS[next_field])
         return {"status": "ok"}
 
     # --------------------------------------------------------------
@@ -288,7 +282,7 @@ async def supplier_agent(request: Request):
     # --------------------------------------------------------------
     errors = validate_against_fusion(session)
     if errors:
-        send_activity(activity_dict, "Validation failed:\n" + "\n".join(errors))
+        send_activity(activity_json, "Validation failed:\n" + "\n".join(errors))
         return {"status": "ok"}
 
     # --------------------------------------------------------------
@@ -302,7 +296,7 @@ async def supplier_agent(request: Request):
     state["state"] = "CONFIRM"
 
     send_activity(
-        activity_dict,
+        activity_json,
         "Please review the supplier details:\n\n"
         + summary
         + "\n\nConfirm? (yes / edit / cancel)"
