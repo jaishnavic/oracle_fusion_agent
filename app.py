@@ -26,43 +26,24 @@ sessions = {}
 MICROSOFT_APP_ID = os.getenv("MICROSOFT_APP_ID")
 MICROSOFT_APP_PASSWORD = os.getenv("MICROSOFT_APP_PASSWORD")
  
- 
 def get_access_token():
 
     url = "https://login.microsoftonline.com/b3a4b690-cc48-44de-8fa2-1211996e5d85/oauth2/v2.0/token"
-
-
-
     data = {
-
         "grant_type": "client_credentials",
-
         "client_id": os.getenv("MICROSOFT_APP_ID"),
-
         "client_secret": os.getenv("MICROSOFT_APP_PASSWORD"),
-
         "scope": "https://api.botframework.com/.default"
-
     }
-
-
-
     headers = {
-
         "Content-Type": "application/x-www-form-urlencoded"
 
     }
-
-
-
     r = requests.post(url, data=data, headers=headers)
-
     r.raise_for_status()
-
     return r.json()["access_token"]
 
 
- 
 def send_activity(activity: dict, text: str):
     try:
         token = get_access_token()
@@ -117,7 +98,7 @@ class BotActivity(BaseModel):
         populate_by_name = True
         fields = {"from_": "from"}
  
- 
+
 # ------------------------------------------------------------------
 # Health
 # ------------------------------------------------------------------
@@ -216,32 +197,30 @@ async def supplier_agent(request: Request):
             status, response = create_supplier(session)
             sessions.pop(conversation_id, None)
 
-            # ✅ SUCCESS
+            try:
+                status, response = create_supplier(session)
+            except Exception as e:
+                status, response = 500, str(e)
+
+            sessions.pop(conversation_id, None)
+
+            # --- STEP C: SEND SUCCESS/FAILURE RESPONSE ---
             if status == 201:
-                send_activity(
-                    activity_dict,
-                    "✅ Supplier Created Successfully\n\n"
+                msg = (
+                    "✅ **Supplier Created Successfully**\n\n"
                     f"Supplier ID: {response.get('SupplierId')}\n"
                     f"Supplier Number: {response.get('SupplierNumber')}"
                 )
-                return {"status": "ok"}
+            else:
+                # Log the raw error for debugging
+                logging.error(f"Fusion API Failed: {response}")
+                
+                # If the error is a dict, try to get the message, otherwise use string
+                error_detail = response if isinstance(response, str) else str(response)
+                msg = f"❌ **Creation Failed (Status: {status})**\n\nIssue: {error_detail}"
 
-            # ❌ BUSINESS / VALIDATION ERRORS FROM FUSION
-            if isinstance(response, str):
-                send_activity(
-                    activity_dict,
-                    "❌ Supplier creation failed due to the following issue:\n\n"
-                    f"{response}"
-                )
-                return {"status": "ok"}
-
-            # ❌ UNKNOWN ERROR STRUCTURE
-            send_activity(
-                activity_dict,
-                "❌ Supplier creation failed.\n\n"
-                f"Status Code: {status}\n"
-                f"Response: {response}"
-            )
+            # We use activity_json here to ensure the serviceUrl is correct
+            send_activity(activity_json, msg)
             return {"status": "ok"}
 
 
