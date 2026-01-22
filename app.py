@@ -211,17 +211,34 @@ async def supplier_agent(request: Request):
             status, response = create_supplier(session)
             sessions.pop(conversation_id, None)
 
+            # ✅ SUCCESS
             if status == 201:
                 send_activity(
-                    activity_json,
-                    f"✅ Supplier Created Successfully\n"
+                    activity_dict,
+                    "✅ Supplier Created Successfully\n\n"
                     f"Supplier ID: {response.get('SupplierId')}\n"
                     f"Supplier Number: {response.get('SupplierNumber')}"
                 )
-            else:
-                send_activity(activity_json, "❌ Supplier creation failed.")
+                return {"status": "ok"}
 
+            # ❌ BUSINESS / VALIDATION ERRORS FROM FUSION
+            if isinstance(response, str):
+                send_activity(
+                    activity_dict,
+                    "❌ Supplier creation failed due to the following issue:\n\n"
+                    f"{response}"
+                )
+                return {"status": "ok"}
+
+            # ❌ UNKNOWN ERROR STRUCTURE
+            send_activity(
+                activity_dict,
+                "❌ Supplier creation failed.\n\n"
+                f"Status Code: {status}\n"
+                f"Response: {response}"
+            )
             return {"status": "ok"}
+
 
         if decision == "edit":
             state["state"] = "EDIT"
