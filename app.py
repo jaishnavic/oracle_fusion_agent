@@ -5,6 +5,7 @@ from datetime import datetime
 import requests
 import os
 import logging
+import json
  
 from gemini_agent import extract_supplier_payload
 from utils.session_manager import init_session, merge_session, get_missing_fields
@@ -209,7 +210,10 @@ async def supplier_agent(request: Request):
             if status == 201:
                 # Success
                 supplier_id = response.get('SupplierId', 'N/A') if isinstance(response, dict) else "Created"
-                send_activity(activity_json, f"✅ **Success!** Supplier created. ID: {supplier_id}")
+                supplier_number = response.get('SupplierNumber', 'N/A') if isinstance(response, dict) else "N/A"
+                send_activity(activity_json, f"✅ **Success!** Supplier created")
+                send_activity(activity_json, f"Supplier ID: {supplier_id}")
+                send_activity(activity_json, f"Supplier Number: {supplier_id}")
             else:
                 # FAILURE: Send the exact error string to Azure Chat
                 # If response is a dict, convert it to a readable string
