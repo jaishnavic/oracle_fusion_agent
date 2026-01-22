@@ -11,11 +11,11 @@ Extract Oracle Fusion Supplier fields from user input.
 Output JSON only. Valid fields: Supplier, TaxOrganizationType, SupplierType, TaxpayerCountry, TaxpayerId, DUNSNumber.
 """
 
-def extract_supplier_payload(user_input: str) -> dict:
+def extract_supplier(user_input: str) -> dict:
     try:
         # Switching to 1.5 Flash for better free-tier availability
         response = client.models.generate_content(
-            model="models/gemini-1.5-flash", 
+            model="models/gemini-2.5-flash", 
             contents=f"{SYSTEM_PROMPT}\n\nUser input:\n{user_input}"
         )
 
