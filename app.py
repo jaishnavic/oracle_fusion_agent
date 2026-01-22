@@ -64,41 +64,39 @@ def get_access_token():
 
  
 def send_activity(activity: dict, text: str):
-    token = get_access_token()
+    try:
+        token = get_access_token()
 
-    service_url = activity.get("serviceUrl")
-    conversation = activity.get("conversation")
+        # ✅ Normalize "from"
+        sender = activity.get("from") or activity.get("from_")
+        recipient = activity.get("recipient")
 
-    # ✅ SAFE extraction (handles both raw + Pydantic payloads)
-    user = activity.get("from") or activity.get("from_")
-    bot = activity.get("recipient")
+        if not sender or not recipient:
+            logging.error("Invalid activity payload for sending message")
+            logging.error(activity)
+            return
 
-    if not all([service_url, conversation, user, bot]):
-        logging.error("Invalid activity payload for sending message")
-        logging.error(activity)
-        return
+        url = f"{activity['serviceUrl']}/v3/conversations/{activity['conversation']['id']}/activities"
 
-    url = f"{service_url}/v3/conversations/{conversation['id']}/activities"
+        payload = {
+            "type": "message",
+            "from": recipient,   # BOT
+            "recipient": sender, # USER
+            "conversation": activity["conversation"],
+            "replyToId": activity.get("id"),
+            "text": text
+        }
 
-    payload = {
-        "type": "message",
-        "from": bot,        # BOT
-        "recipient": user, # USER
-        "conversation": conversation,
-        "replyToId": activity.get("id"),
-        "text": text
-    }
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+        requests.post(url, headers=headers, json=payload)
 
-    r = requests.post(url, headers=headers, json=payload)
+    except Exception:
+        logging.exception("Failed to send activity")
 
-    if r.status_code not in (200, 201):
-        logging.error("Send activity failed")
-        logging.error(r.text)
 
 
  
