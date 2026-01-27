@@ -29,8 +29,7 @@ MICROSOFT_APP_PASSWORD = os.getenv("MICROSOFT_APP_PASSWORD")
  
 def get_access_token():
 
-    url = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
-
+    url = "https://login.microsoftonline.com/b3a4b690-cc48-44de-8fa2-1211996e5d85/oauth2/v2.0/token"
     data = {
         "grant_type": "client_credentials",
         "client_id": os.getenv("MICROSOFT_APP_ID"),
